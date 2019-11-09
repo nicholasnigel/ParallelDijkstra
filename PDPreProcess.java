@@ -28,10 +28,13 @@ public class PDPreProcess {
     public static class PreMapper extends Mapper<LongWritable, Text, IntWritable, MapWritable> {
         private HashMap<Integer, MapWritable> store;
         private List<String> line;  // for reading purpose
+        private String options;
 
         public void setup(Context context) throws IOException, InterruptedException {
             store = new HashMap<Integer, MapWritable>();
             line = new ArrayList<String>();
+            Configuration conf = context.getConfiguration();
+            options = conf.get("options");
         }
 
         public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
@@ -47,7 +50,8 @@ public class PDPreProcess {
                 // the 3 elements
                 int id = Integer.parseInt(line.get(0));
                 int neighborid = Integer.parseInt(line.get(1));
-                int distance = Integer.parseInt(line.get(2));
+                //int distance = Integer.parseInt(line.get(2));
+                int distance = (options.equals("weighted")) ? Integer.parseInt(line.get(2)) : 1;
 
                 // gettign adjacency list if stored, else createnew
                 MapWritable adjlist, neighboradjlist;
@@ -102,7 +106,6 @@ public class PDPreProcess {
             PDNodeWritable node = new PDNodeWritable(key.get());
             node.addAllToAdjacency(comb);
 
-            if(key.get() == 5) context.getCounter(Test.COUNT).setValue(node.adjacencyListSize());
             context.write(key, node);
         }
     }

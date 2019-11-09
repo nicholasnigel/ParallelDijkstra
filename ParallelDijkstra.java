@@ -26,27 +26,27 @@ import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 
 public class ParallelDijkstra {
 
-    public enum Counter{COUNT};
+    public enum updateCounter{COUNT};
     public static class PDMap extends Mapper<IntWritable, PDNodeWritable, IntWritable, PDNodeWritable> {
         
         public void map(IntWritable key, PDNodeWritable value, Context context) throws IOException, InterruptedException {
             Configuration conf = context.getConfiguration();
             int sourceID = Integer.parseInt(conf.get("source"));    
             if(key.get() == sourceID) value.setDistance(0);     // set source id's distance to 0
-            if(key.get() == 3) context.getCounter(Counter.COUNT).setValue(value.adjacencyListSize());
             context.write(key, value);      // pass along the node structure
             
             // For all adjacent list in the node structure, pass the distance + d
             
             int disFromSource = value.getDistance();    // distance of this node from source
             
-            HashMap<Integer, Integer> adjacentlist = value.getAdjacencyList();
-            for(int neighborid: adjacentlist.keySet()) {
+            MapWritable adjacentlist = value.getAdjacencyList();
+            for(Writable neighborid: adjacentlist.keySet()) {
                 if(disFromSource >= Integer.MAX_VALUE) continue;  // if distance still infinity (not discovered yet) no need to pass it along
-                int disToNode = adjacentlist.get(neighborid);
+                IntWritable disToNodetmp =(IntWritable) adjacentlist.get(neighborid);
+                int disToNode = disToNodetmp.get();
                 int totalDistance = disToNode + disFromSource;
                 PDNodeWritable node = new PDNodeWritable(-1, totalDistance);    //  creating new node structure to pass along that only contains distance
-                context.write(new IntWritable(neighborid), node);
+                context.write((IntWritable) neighborid, node);
             }
 
         }
@@ -70,8 +70,28 @@ public class ParallelDijkstra {
                 }
 
             }
-            if(minimumDistance < node.getDistance()) node.setDistance(minimumDistance);
-            
+            if(minimumDistance < node.getDistance()) {
+                node.setDistance(minimumDistance);
+                context.getCounter(updateCounter.COUNT).increment(1);
+            }
+            context.write(key, node);
+        }
+    }
+
+
+    public static class outputMap extends Mapper<IntWritable, PDNodeWritable, IntWritable, PDNodeWritable> {
+        public void map(IntWritable key, PDNodeWritable value, Context context) throws IOException, InterruptedException {
+            if(value.getDistance() < Integer.MAX_VALUE) context.write(key, value);  // if distance is not infinity pass it along
+        }
+
+    } 
+
+    public static class outputReduce extends Reducer<IntWritable, PDNodeWritable, IntWritable, PDNodeWritable> {
+        public void reduce(IntWritable key, Iterable<PDNodeWritable> values, Context context) throws IOException, InterruptedException {
+            PDNodeWritable node = new PDNodeWritable();
+            for(PDNodeWritable v: values) {
+                node = v;
+            }
             context.write(key, node);
         }
     }
@@ -105,29 +125,72 @@ public class ParallelDijkstra {
         job.setOutputValueClass(PDNodeWritable.class);
 
         job.setJarByClass(ParallelDijkstra.class);
-        job.setMapperClass(PDMap.class);
-        job.setReducerClass(PDReduce.class);
+        job.setMapperClass(outputMap.class);
+        job.setReducerClass(outputReduce.class);
 
         return job;
     }
 
     public static void main(String[] args) throws Exception {
         Configuration conf = new Configuration();
-        conf.set("source", "1");
+        // Getting parameters from command line
+        String input = args[0];        
+        String output = args[1];
+        String sourceID = args[2];
+        int iterations = Integer.parseInt(args[3]);
+        String options = args[4];
+        
+        String temporaryPath = "/user/hadoop/pd/tmp";
+        
+        List<String> paths = new ArrayList<String>();
         FileSystem hdfs = FileSystem.get(conf);
-        String input = "/user/hadoop/pd/input";
-        String output = "/user/hadoop/pd/output";
-        String tempPath = "/user/hadoop/pd/temp";
+        // setting configurations
+        conf.set("options",options);
+        conf.set("source", sourceID);
 
-        Job preprocess = PDPreProcess.getPreProcess(conf, input, tempPath);
+        // Preprocessing
+        Job preprocess = PDPreProcess.getPreProcess(conf, input, temporaryPath);
         preprocess.waitForCompletion(true);
-        System.out.println(preprocess.getCounters().findCounter(PDPreProcess.Test.COUNT).getValue());
+        paths.add(temporaryPath);
+
+
+        String tempInputPath = temporaryPath;
+        String tempOutputPath = "";
+        if(iterations > 0 ){
+            for(int i = 0; i < iterations; i++) {
+                tempOutputPath = temporaryPath + i;
+                Job dijk = iterateDijkstra(conf, tempInputPath, tempOutputPath);
+                dijk.waitForCompletion(true);
+                tempInputPath = tempOutputPath;
+                paths.add(tempOutputPath);
+            }
+        }
+        else {
+            // iterate until no more changes
+            long changes = 1L;
+            int k = 0;
+            while(changes != 0) {
+                tempOutputPath = temporaryPath + k;
+                k++;
+                Job dijk = iterateDijkstra(conf, tempInputPath, tempOutputPath);
+                dijk.waitForCompletion(true);
+                tempInputPath = tempOutputPath;
+                paths.add(tempOutputPath);
+                changes = dijk.getCounters().findCounter(updateCounter.COUNT).getValue();
+                System.out.println("Total Updates: "+ changes);
+            }
         
-        Job dijk = output(conf, tempPath, output);
-        dijk.waitForCompletion(true);
-        System.out.println(dijk.getCounters().findCounter(Counter.COUNT).getValue());
-        
-        hdfs.delete(new Path(tempPath), true);
-        
+        }
+
+        // Try to output
+        Job out = output(conf, tempOutputPath, output);
+        out.waitForCompletion(true);
+
+
+        for(String path: paths){
+            Path p = new Path(path);
+            hdfs.delete(p, true);
+        }
     }
+
 }

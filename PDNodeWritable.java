@@ -24,10 +24,12 @@ import org.apache.hadoop.mapreduce.lib.output.SequenceFileOutputFormat;
 public class PDNodeWritable implements Writable{
     private int id;
     private int distance;
-    private HashMap<Integer, Integer> adjacencyList;     
+    //private HashMap<Integer, Integer> adjacencyList;     
+    private MapWritable adjacencyList;
 
     public PDNodeWritable(){
-        adjacencyList = new HashMap<Integer,Integer>();
+        //adjacencyList = new HashMap<Integer,Integer>();
+        adjacencyList = new MapWritable();
     }
     public PDNodeWritable(int id) {
         this();
@@ -41,6 +43,7 @@ public class PDNodeWritable implements Writable{
     /**copy the PDNodewritable Object */
     public PDNodeWritable(PDNodeWritable other) {
         this(other.getId(), other.getDistance());
+        //adjacencyList.putAll(other.getAdjacencyList());
         adjacencyList.putAll(other.getAdjacencyList());
     }
 
@@ -56,22 +59,21 @@ public class PDNodeWritable implements Writable{
     public void setDistance(int distance) {
         this.distance = distance;
     }
-    public HashMap<Integer, Integer> getAdjacencyList(){
+    public MapWritable getAdjacencyList(){
         return this.adjacencyList; 
     }
     public void addToAdjacencyList(int k, int v){
-        adjacencyList.put(k,v);
+        //adjacencyList.put(k,v);
+        adjacencyList.put(new IntWritable(k), new IntWritable(v));
     }
     public void addAllToAdjacency(MapWritable other){
-        for(Writable key: other.keySet()) {
-            IntWritable value = (IntWritable) other.get(key);
-            adjacencyList.put(((IntWritable)key).get(), value.get());
-        }
-    
-    }
-    public void putAllToAdjacency(HashMap other) {
         adjacencyList.putAll(other);
     }
+    
+    //public void putAllToAdjacency(HashMap other) {
+        //adjacencyList.putAll(other);
+    //}
+
     public int adjacencyListSize(){
         return adjacencyList.size();
     }
@@ -81,11 +83,7 @@ public class PDNodeWritable implements Writable{
         // format: <id> <distance> <mapsize> <mapkey1><mapvalue1> .. <mapkeyn><mapvaluen>
         out.writeInt(id);
         out.writeInt(distance);
-        out.writeInt(adjacencyListSize());
-        for(Entry<Integer, Integer> entry: adjacencyList.keySet()) {
-            out.writeInt(entry.getKey());
-            out.writeInt(entry.getValue());
-        }
+        adjacencyList.write(out);
     }
     
     
@@ -93,21 +91,17 @@ public class PDNodeWritable implements Writable{
         // format: <id> <distance> <mapsize> <mapkey1><mapvalue1> .. <mapkeyn><mapvaluen>
         id = in.readInt();
         distance = in.readInt();
-        int size = in.readInt();
-        for(int i = 0 ; i < size ; i++) {
-            int k = in.readInt();
-            int v = in.readInt();
-            adjacencyList.put(k, v);
-        }
+        adjacencyList.readFields(in);
     }
 
     /** returns string format */
     @Override
     public String toString() {
         String s = "";
-        for(int key: adjacencyList.keySet()) {
-            int value = adjacencyList.get(key);
-            s += "(" + key+ " "+ value+")";
+        for(Writable key: adjacencyList.keySet()) {
+            IntWritable value = (IntWritable)adjacencyList.get(key);
+            int val = value.get();
+            s += "(" + key.toString()+ " "+ value+")";
         }
         s += "distance: " + distance + " id: " + id;
         return s;
